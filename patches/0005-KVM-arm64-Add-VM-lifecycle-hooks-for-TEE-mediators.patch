@@ -1,0 +1,50 @@
+From f2b81734929d0b15e93338a8d08b8bb9a3437477 Mon Sep 17 00:00:00 2001
+From: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+Date: Tue, 26 May 2026 21:20:00 +0530
+Subject: [PATCH 5/8] KVM: arm64: Add VM lifecycle hooks for TEE mediators
+
+Hook into `kvm_arch_init_vm` and `kvm_arch_destroy_vm` to invoke the generic
+TEE mediator lifecycle handlers. This informs the Secure World when guests are
+created or shut down, enabling multi-tenant isolation.
+
+Signed-off-by: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+---
+ arch/arm64/kvm/arm.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm64/kvm/arm.c b/arch/arm64/kvm/arm.c
+index 2887d67f71..d67f71d8e1 100644
+--- a/arch/arm64/kvm/arm.c
++++ b/arch/arm64/kvm/arm.c
+@@ -23,6 +23,7 @@
+ #include <asm/kvm_emulate.h>
+ #include <asm/kvm_mmu.h>
+ #include <asm/kvm_pkvm.h>
++#include <linux/tee_mediator.h>
+ 
+ #ifdef CONFIG_KVM_GENERIC_MMU
+ static bool vgic_present = true;
+@@ -142,6 +143,12 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
+ 	if (ret)
+ 		return ret;
+ 
++	ret = tee_mediator_init_vm(kvm);
++	if (ret) {
++		kvm_free_stage2_pgd(kvm);
++		return ret;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -165,6 +172,8 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
+ {
+ 	int i;
+ 
++	tee_mediator_destroy_vm(kvm);
++
+ 	for (i = 0; i < KVM_MAX_VCPUS; i++) {
+ 		if (kvm->vcpus[i]) {
+ 			kvm_arch_vcpu_destroy(kvm->vcpus[i]);
+-- 
+2.34.1
