@@ -1,0 +1,120 @@
+From 2eb33a5ab71ec85b2e93338a8d08b8bb979039f2b Mon Sep 17 00:00:00 2001
+From: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+Date: Tue, 26 May 2026 21:10:00 +0530
+Subject: [PATCH 3/8] tee: Implement core TEE mediator framework
+
+Implement the registration and dispatch functions for the TEE mediator.
+Allows multiple mediator drivers to register their callbacks, and dispatches
+VM lifecycle notifications and SMC requests from KVM guests.
+
+Signed-off-by: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+---
+ drivers/tee/Makefile       |  1 +
+ drivers/tee/tee_mediator.c | 95 ++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 96 insertions(+)
+ create mode 100644 drivers/tee/tee_mediator.c
+
+diff --git a/drivers/tee/Makefile b/drivers/tee/Makefile
+index 34e10031ed..c34e10031e 100644
+--- a/drivers/tee/Makefile
++++ b/drivers/tee/Makefile
+@@ -4,3 +4,4 @@ obj-y += tee.o
+ obj-y += optee/
+ obj-y += pkcs11/
+ obj-$(CONFIG_TEE_MEDIATOR) += tee_mediator.o
+diff --git a/drivers/tee/tee_mediator.c b/drivers/tee/tee_mediator.c
+new file mode 100644
+index 0000000000..f7f7a86f2b
+--- /dev/null
++++ b/drivers/tee/tee_mediator.c
+@@ -0,0 +1,95 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * TEE Mediator Framework Implementation
++ *
++ * Copyright (C) 2026 Himanshu Kumar <himanshu@kvm-optee-bridge.org>
++ */
++
++#define pr_fmt(fmt) "tee-mediator: " fmt
++
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/mutex.h>
++#include <linux/tee_mediator.h>
++
++static const struct tee_mediator_ops *active_mediator;
++static DEFINE_MUTEX(mediator_lock);
++
++int tee_mediator_register_ops(const struct tee_mediator_ops *ops)
++{
++	int ret = 0;
++
++	if (!ops || !ops->handle_smc)
++		return -EINVAL;
++
++	mutex_lock(&mediator_lock);
++	if (active_mediator) {
++		pr_err("Mediator %s already registered, cannot register %s\n",
++		       active_mediator->name, ops->name);
++		ret = -EBUSY;
++	} else {
++		active_mediator = ops;
++		pr_info("Registered mediator: %s\n", ops->name);
++	}
++	mutex_unlock(&mediator_lock);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(tee_mediator_register_ops);
++
++void tee_mediator_unregister_ops(const struct tee_mediator_ops *ops)
++{
++	mutex_lock(&mediator_lock);
++	if (active_mediator == ops) {
++		active_mediator = NULL;
++		pr_info("Unregistered mediator: %s\n", ops->name);
++	}
++	mutex_unlock(&mediator_lock);
++}
++EXPORT_SYMBOL_GPL(tee_mediator_unregister_ops);
++
++int tee_mediator_init_vm(struct kvm *kvm)
++{
++	int ret = 0;
++
++	mutex_lock(&mediator_lock);
++	if (active_mediator && active_mediator->init_vm) {
++		ret = active_mediator->init_vm(kvm);
++	}
++	mutex_unlock(&mediator_lock);
++
++	return ret;
++}
++
++void tee_mediator_destroy_vm(struct kvm *kvm)
++{
++	mutex_lock(&mediator_lock);
++	if (active_mediator && active_mediator->destroy_vm) {
++		active_mediator->destroy_vm(kvm);
++	}
++	mutex_unlock(&mediator_lock);
++}
++
++bool tee_mediator_handle_smc(struct kvm_vcpu *vcpu)
++{
++	bool handled = false;
++
++	mutex_lock(&mediator_lock);
++	if (active_mediator && active_mediator->handle_smc) {
++		handled = active_mediator->handle_smc(vcpu);
++	}
++	mutex_unlock(&mediator_lock);
++
++	return handled;
++}
++
++MODULE_AUTHOR("Himanshu Kumar <himanshu@kvm-optee-bridge.org>");
++MODULE_DESCRIPTION("Generic TEE Mediator Abstraction Layer");
++MODULE_LICENSE("GPL v2");
+-- 
+2.34.1
