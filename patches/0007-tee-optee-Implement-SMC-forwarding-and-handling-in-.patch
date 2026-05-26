@@ -1,0 +1,102 @@
+From 3477152ff9a0204045b5633232a61b173cd548f3 Mon Sep 17 00:00:00 2001
+From: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+Date: Tue, 26 May 2026 21:30:00 +0530
+Subject: [PATCH 7/8] tee: optee: Implement SMC forwarding and VMID handling
+
+Implement SMC interception and forwarding. Notify the secure world when VMs
+are created/destroyed via `OPTEE_SMC_VM_CREATED` and `OPTEE_SMC_VM_DESTROYED`.
+Extract registers, override the hypervisor client ID in register `a7`, and
+safely forward TEE calls to the Secure Monitor.
+
+Signed-off-by: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+---
+ drivers/tee/optee/optee_mediator.c | 62 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 62 insertions(+)
+
+diff --git a/drivers/tee/optee/optee_mediator.c b/drivers/tee/optee/optee_mediator.c
+index f52ff9a020..a61b173cd5 100644
+--- a/drivers/tee/optee/optee_mediator.c
++++ b/drivers/tee/optee/optee_mediator.c
+@@ -12,21 +12,83 @@
+ #include <linux/tee_mediator.h>
+ #include <linux/arm-smccc.h>
+ 
++/* OP-TEE Virtualization SMC IDs */
++#define OPTEE_SMC_VM_CREATED		0x3200000b
++#define OPTEE_SMC_VM_DESTROYED		0x3200000c
++
+ static bool optee_mediator_is_active(void)
+ {
+ 	return true;
+ }
+ 
++static void forward_smc_to_secure_world(struct arm_smccc_res *res,
++					unsigned long a0, unsigned long a1,
++					unsigned long a2, unsigned long a3,
++					unsigned long a4, unsigned long a5,
++					unsigned long a6, unsigned long a7)
++{
++	arm_smccc_smc(a0, a1, a2, a3, a4, a5, a6, a7, res);
++}
++
+ static int optee_mediator_init_vm(struct kvm *kvm)
+ {
+ 	struct arm_smccc_res res;
+ 	int vmid = kvm->userspace_pid;
+ 
+ 	pr_info("Initializing OP-TEE state for VM (Client ID: %d)\n", kvm->userspace_pid);
++
++	/* Notify OP-TEE OS of the new VM creation */
++	forward_smc_to_secure_world(&res, OPTEE_SMC_VM_CREATED, vmid, 0, 0, 0, 0, 0, 0);
++	if (res.a0 != 0) {
++		pr_err("Failed to notify OP-TEE of VM creation: %ld\n", res.a0);
++		return -EIO;
++	}
++
++	return 0;
++}
++
++static void optee_mediator_destroy_vm(struct kvm *kvm)
++{
++	struct arm_smccc_res res;
++	int vmid = kvm->userspace_pid;
++
++	pr_info("Destroying OP-TEE state for VM (Client ID: %d)\n", kvm->userspace_pid);
++
++	/* Notify OP-TEE OS of VM destruction */
++	forward_smc_to_secure_world(&res, OPTEE_SMC_VM_DESTROYED, vmid, 0, 0, 0, 0, 0, 0);
++}
++
++static bool optee_mediator_handle_smc(struct kvm_vcpu *vcpu)
++{
++	unsigned long a0 = vcpu_get_reg(vcpu, 0);
++	unsigned long a1 = vcpu_get_reg(vcpu, 1);
++	unsigned long a2 = vcpu_get_reg(vcpu, 2);
++	unsigned long a3 = vcpu_get_reg(vcpu, 3);
++	unsigned long a4 = vcpu_get_reg(vcpu, 4);
++	unsigned long a5 = vcpu_get_reg(vcpu, 5);
++	unsigned long a6 = vcpu_get_reg(vcpu, 6);
++	struct arm_smccc_res res;
++
++	/* Only handle SMCs targeted at OP-TEE / Trusted OS */
++	if (!ARM_SMCCC_IS_OWNER_TRUSTED_OS(a0) && !ARM_SMCCC_IS_OWNER_TRUSTED_APP(a0))
++		return false;
++
++	/*
++	 * Enforce VMID context. In register a7, we pass the guest VM's VMID
++	 * (userspace_pid) to the Secure World so OP-TEE can isolate state.
++	 */
++	unsigned long a7 = vcpu->kvm->userspace_pid;
++
++	/* Forward the call to firmware */
++	forward_smc_to_secure_world(&res, a0, a1, a2, a3, a4, a5, a6, a7);
++
++	/* Set return values in the vCPU registers */
++	vcpu_set_reg(vcpu, 0, res.a0);
++	vcpu_set_reg(vcpu, 1, res.a1);
++	vcpu_set_reg(vcpu, 2, res.a2);
++	vcpu_set_reg(vcpu, 3, res.a3);
++
++	return true;
+ }
+ 
