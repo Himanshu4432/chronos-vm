@@ -1,0 +1,71 @@
+From ad58c3b2a5f0e5335f7f5753bce1e8a924a1fd8cef70b8a9ce9f423ae21036966 Mon Sep 17 00:00:00 2001
+From: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+Date: Tue, 26 May 2026 21:05:00 +0530
+Subject: [PATCH 2/8] tee: Introduce generic TEE mediator interface
+
+Define the generic TEE mediator abstraction layer. This interface allows
+specific TEE drivers (like OP-TEE) to register callback operations that
+are invoked when guest virtual machines execute SMC calls trapped at EL2,
+or during VM lifecycle transitions.
+
+Signed-off-by: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+---
+ include/linux/tee_mediator.h | 52 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+ create mode 100644 include/linux/tee_mediator.h
+
+diff --git a/include/linux/tee_mediator.h b/include/linux/tee_mediator.h
+new file mode 100644
+index 0000000000..f6c0be1b23
+--- /dev/null
++++ b/include/linux/tee_mediator.h
+@@ -0,0 +1,52 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * TEE Mediator Framework Interface
++ *
++ * Copyright (C) 2026 Himanshu Kumar <himanshu@kvm-optee-bridge.org>
++ */
++
++#ifndef __LINUX_TEE_MEDIATOR_H
++#define __LINUX_TEE_MEDIATOR_H
++
++#include <linux/types.h>
++#include <linux/kvm_host.h>
++
++struct tee_mediator_ops {
++	const char *name;
++	bool (*is_active)(void);
++	int (*init_vm)(struct kvm *kvm);
++	void (*destroy_vm)(struct kvm *kvm);
++	bool (*handle_smc)(struct kvm_vcpu *vcpu);
++};
++
++#ifdef CONFIG_TEE_MEDIATOR
++int tee_mediator_register_ops(const struct tee_mediator_ops *ops);
++void tee_mediator_unregister_ops(const struct tee_mediator_ops *ops);
++
++int tee_mediator_init_vm(struct kvm *kvm);
++void tee_mediator_destroy_vm(struct kvm *kvm);
++bool tee_mediator_handle_smc(struct kvm_vcpu *vcpu);
++#else
++static inline int tee_mediator_register_ops(const struct tee_mediator_ops *ops)
++{
++	return -ENODEV;
++}
++static inline void tee_mediator_unregister_ops(const struct tee_mediator_ops *ops) {}
++
++static inline int tee_mediator_init_vm(struct kvm *kvm)
++{
++	return 0;
++}
++static inline void tee_mediator_destroy_vm(struct kvm *kvm) {}
++static inline bool tee_mediator_handle_smc(struct kvm_vcpu *vcpu)
++{
++	return false;
++}
++#endif /* CONFIG_TEE_MEDIATOR */
++
++#endif /* __LINUX_TEE_MEDIATOR_H */
+-- 
+2.34.1
