@@ -1,0 +1,41 @@
+name: Project Validation CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Validate Patch Format
+        run: |
+          echo "Checking formatting of patch files..."
+          for patch_file in patches/*.patch; do
+            if [ -f "$patch_file" ]; then
+              echo "Validating $patch_file"
+              # Ensure patch begins with From
+              if ! head -n 1 "$patch_file" | grep -q "^From "; then
+                echo "Error: $patch_file is not a valid email-formatted patch."
+                exit 1
+              fi
+            fi
+          done
+          echo "All patches are formatted correctly."
+
+      - name: Lint C Source Files
+        run: |
+          echo "Linting C source code..."
+          # Syntax-only compile verification for test app
+          gcc -fsyntax-only -Wall -std=c99 shared/guest_test.c
+          echo "Syntax check passed."
