@@ -1,0 +1,35 @@
+From 4ec2948fe3f65dba2f19e691e702f7de2949179c Mon Sep 17 00:00:00 2001
+From: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+Date: Tue, 26 May 2026 21:00:00 +0530
+Subject: [PATCH 1/8] arm64: smccc: Add Trusted OS and App owner helpers
+
+Introduce helper macros to identify if an SMC call is targeted towards
+a Trusted OS (e.g. OP-TEE) or Trusted Application. This allows
+hypervisors like KVM to inspect the SMC owner range and route
+the calls to mediators.
+
+Signed-off-by: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+---
+ include/linux/arm-smccc.h | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/include/linux/arm-smccc.h b/include/linux/arm-smccc.h
+index 92b0c56758..e93338a8d0 100644
+--- a/include/linux/arm-smccc.h
++++ b/include/linux/arm-smccc.h
+@@ -52,6 +52,12 @@
+ #define ARM_SMCCC_OWNER_SIP		2
+ #define ARM_SMCCC_OWNER_OEM		3
+ #define ARM_SMCCC_OWNER_STANDARD	4
++#define ARM_SMCCC_OWNER_TRUSTED_OS	50
++#define ARM_SMCCC_OWNER_TRUSTED_APP	51
++
++#define ARM_SMCCC_IS_OWNER_TRUSTED_OS(fn) \
++	(ARM_SMCCC_GET_OWNER(fn) == ARM_SMCCC_OWNER_TRUSTED_OS)
++#define ARM_SMCCC_IS_OWNER_TRUSTED_APP(fn) \
++	(ARM_SMCCC_GET_OWNER(fn) == ARM_SMCCC_OWNER_TRUSTED_APP)
+ 
+ #define ARM_SMCCC_OWNER_STANDARD_HYP	5
+ #define ARM_SMCCC_OWNER_VENDOR_HYP	6
+-- 
+2.34.1
