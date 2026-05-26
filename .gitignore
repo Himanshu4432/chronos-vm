@@ -1,0 +1,24 @@
+# Build and Object files
+out/
+build/
+*.o
+*.bin
+*.elf
+*.ko
+*.so
+*.a
+*.mod
+*.mod.c
+.tmp_versions/
+modules.order
+Module.symvers
+.cache.mk
+
+# Compiled binaries
+guest_test
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
