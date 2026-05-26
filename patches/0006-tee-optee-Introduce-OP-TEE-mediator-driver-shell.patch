@@ -1,0 +1,93 @@
+From 26533318ac47648fb7752a1d5f5bbacc287f0b58 Mon Sep 17 00:00:00 2001
+From: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+Date: Tue, 26 May 2026 21:25:00 +0530
+Subject: [PATCH 6/8] tee: optee: Introduce OP-TEE mediator driver shell
+
+Implement the module init/exit structure for the OP-TEE mediator driver.
+Registers its callback handlers (`struct tee_mediator_ops`) with the
+generic TEE mediator core framework.
+
+Signed-off-by: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+---
+ drivers/tee/optee/Makefile         |  1 +
+ drivers/tee/optee/optee_mediator.c | 68 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 69 insertions(+)
+ create mode 100644 drivers/tee/optee/optee_mediator.c
+
+diff --git a/drivers/tee/optee/Makefile b/drivers/tee/optee/Makefile
+index 46477596c4..ee4da73ac9 100644
+--- a/drivers/tee/optee/Makefile
++++ b/drivers/tee/optee/Makefile
+@@ -3,3 +3,4 @@ obj-$(CONFIG_OPTEE) += optee.o
+ optee-objs := main.o \
+               call.o \
+               core.o
++obj-$(CONFIG_OPTEE_MEDIATOR) += optee_mediator.o
+diff --git a/drivers/tee/optee/optee_mediator.c b/drivers/tee/optee/optee_mediator.c
+new file mode 100644
+index 0000000000..f52ff9a020
+--- /dev/null
++++ b/drivers/tee/optee/optee_mediator.c
+@@ -0,0 +1,68 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * OP-TEE Virtualization Mediator for KVM Guest VMs
++ *
++ * Copyright (C) 2026 Himanshu Kumar <himanshu@kvm-optee-bridge.org>
++ */
++
++#define pr_fmt(fmt) "optee-mediator: " fmt
++
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/tee_mediator.h>
++#include <linux/arm-smccc.h>
++
++static bool optee_mediator_is_active(void)
++{
++	return true;
++}
++
++static int optee_mediator_init_vm(struct kvm *kvm)
++{
++	pr_info("Initializing OP-TEE state for VM (Client ID: %d)\n", kvm->userspace_pid);
++	return 0;
++}
++
++static void optee_mediator_destroy_vm(struct kvm *kvm)
++{
++	pr_info("Destroying OP-TEE state for VM (Client ID: %d)\n", kvm->userspace_pid);
++}
++
++static bool optee_mediator_handle_smc(struct kvm_vcpu *vcpu)
++{
++	/* SMC handling logic will be implemented in subsequent patches */
++	return false;
++}
++
++static const struct tee_mediator_ops optee_med_ops = {
++	.name = "optee-mediator",
++	.is_active = optee_mediator_is_active,
++	.init_vm = optee_mediator_init_vm,
++	.destroy_vm = optee_mediator_destroy_vm,
++	.handle_smc = optee_mediator_handle_smc,
++};
++
++static int __init optee_mediator_init(void)
++{
++	return tee_mediator_register_ops(&optee_med_ops);
++}
++
++static void __exit optee_mediator_exit(void)
++{
++	tee_mediator_unregister_ops(&optee_med_ops);
++}
++
++module_init(optee_mediator_init);
++module_exit(optee_mediator_exit);
++
++MODULE_AUTHOR("Himanshu Kumar <himanshu@kvm-optee-bridge.org>");
++MODULE_DESCRIPTION("OP-TEE Mediator Driver for KVM Guests");
++MODULE_LICENSE("GPL v2");
+-- 
+2.34.1
