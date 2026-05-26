@@ -1,0 +1,48 @@
+From d152c207c2235650d1d5f5bbacc287f0b581a05d Mon Sep 17 00:00:00 2001
+From: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+Date: Tue, 26 May 2026 21:15:00 +0530
+Subject: [PATCH 4/8] KVM: arm64: Intercept and forward guest SMCs to TEE mediator
+
+Modify KVM's guest SMC trapping routine to pass the captured register state
+to the TEE mediator layer. If a registered mediator accepts the call, KVM
+skips standard hypervisor SMC handling, allowing secure world features to be virtualized.
+
+Signed-off-by: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+---
+ arch/arm64/kvm/handle_exit.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/arm64/kvm/handle_exit.c b/arch/arm64/kvm/handle_exit.c
+index a358ec7c2f..490293a132 100644
+--- a/arch/arm64/kvm/handle_exit.c
++++ b/arch/arm64/kvm/handle_exit.c
+@@ -10,6 +10,7 @@
+ #include <linux/kvm_host.h>
+ #include <asm/kvm_emulate.h>
+ #include <asm/kvm_mmu.h>
++#include <linux/tee_mediator.h>
+ 
+ typedef int (*exit_handle_fn)(struct kvm_vcpu *);
+ 
+@@ -82,6 +83,19 @@ static int kvm_handle_wfx(struct kvm_vcpu *vcpu)
+ 
+ static int handle_smc(struct kvm_vcpu *vcpu)
+ {
++	/*
++	 * First, check if the SMC can be handled by a registered TEE mediator
++	 * (e.g. OP-TEE or similar secure environment).
++	 */
++	if (tee_mediator_handle_smc(vcpu)) {
++		/*
++		 * If the mediator successfully intercepts and handles the SMC,
++		 * we advance the PC and return control to the guest.
++		 */
++		kvm_incr_pc(vcpu);
++		return 1;
++	}
++
+ 	/* Default KVM behavior: inject an undefined exception or return UNKNOWN */
+ 	vcpu_set_reg(vcpu, 0, ~0UL);
+ 	kvm_incr_pc(vcpu);
+-- 
+2.34.1
