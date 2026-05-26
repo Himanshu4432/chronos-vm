@@ -1,0 +1,123 @@
+From 46287fc23b9847d26823b28000450a3042fe4558 Mon Sep 17 00:00:00 2001
+From: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+Date: Tue, 26 May 2026 21:35:00 +0530
+Subject: [PATCH 8/8] tee: optee: Add IPA to PA translation and memory pinning
+
+Implement memory pinning and IPA to PA translation for guest-shared buffers.
+When a guest VM provides memory buffers (like OPTEE shared memory structures),
+KVM translates the guest intermediate physical addresses (IPAs) to host physical
+addresses (PAs) before passing them to the Secure Monitor. Pin the underlying
+pages to prevent swapping/faults during execution.
+
+Signed-off-by: Himanshu Kumar <himanshu@kvm-optee-bridge.org>
+---
+ drivers/tee/optee/optee_mediator.c | 56 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 56 insertions(+)
+
+diff --git a/drivers/tee/optee/optee_mediator.c b/drivers/tee/optee/optee_mediator.c
+index a61b173cd5..fdf1d9623b 100644
+--- a/drivers/tee/optee/optee_mediator.c
++++ b/drivers/tee/optee/optee_mediator.c
+@@ -10,12 +10,18 @@
+ #include <linux/slab.h>
+ #include <linux/tee_mediator.h>
+ #include <linux/arm-smccc.h>
++#include <linux/kvm_host.h>
++#include <linux/hugetlb.h>
+ 
+ /* OP-TEE Virtualization SMC IDs */
+ #define OPTEE_SMC_VM_CREATED		0x3200000b
+ #define OPTEE_SMC_VM_DESTROYED		0x3200000c
+ 
++/* OP-TEE SMC standard parameter call */
++#define OPTEE_SMC_CALL_WITH_ARG		0x32000004
++
+ static bool optee_mediator_is_active(void)
+ {
+ 	return true;
+ }
+@@ -51,6 +57,32 @@ static void optee_mediator_destroy_vm(struct kvm *kvm)
+ 	forward_smc_to_secure_world(&res, OPTEE_SMC_VM_DESTROYED, vmid, 0, 0, 0, 0, 0, 0);
+ }
+ 
++static phys_addr_t translate_and_pin_ipa(struct kvm *kvm, gpa_t ipa, struct page **pinned_page)
++{
++	gfn_t gfn = ipa >> PAGE_SHIFT;
++	kvm_pfn_t pfn;
++	struct page *page;
++
++	/* Resolve guest frame number to physical frame number */
++	pfn = gfn_to_pfn(kvm, gfn);
++	if (is_error_noslot_pfn(pfn)) {
++		pr_err("Invalid IPA address: 0x%llx\n", ipa);
++		return 0;
++	}
++
++	page = pfn_to_page(pfn);
++	if (!page) {
++		kvm_release_pfn_clean(pfn);
++		return 0;
++	}
++
++	/* Pin the page in host memory */
++	get_page(page);
++	*pinned_page = page;
++
++	return (phys_addr_t)(pfn << PAGE_SHIFT) | (ipa & ~PAGE_MASK);
++}
++
+ static bool optee_mediator_handle_smc(struct kvm_vcpu *vcpu)
+ {
+ 	unsigned long a0 = vcpu_get_reg(vcpu, 0);
+@@ -62,11 +94,35 @@ static bool optee_mediator_handle_smc(struct kvm_vcpu *vcpu)
+ 	unsigned long a6 = vcpu_get_reg(vcpu, 6);
+ 	struct arm_smccc_res res;
++	struct page *pinned_page = NULL;
++	phys_addr_t pa_arg = 0;
++	bool arg_translated = false;
+ 
+ 	/* Only handle SMCs targeted at OP-TEE / Trusted OS */
+ 	if (!ARM_SMCCC_IS_OWNER_TRUSTED_OS(a0) && !ARM_SMCCC_IS_OWNER_TRUSTED_APP(a0))
+ 		return false;
+ 
++	/*
++	 * If the call contains shared parameter buffers (OPTEE_SMC_CALL_WITH_ARG),
++	 * register a1 contains the guest IPA of the argument structure. We must
++	 * translate it to a host physical address and pin the memory.
++	 */
++	if (a0 == OPTEE_SMC_CALL_WITH_ARG && a1 != 0) {
++		pa_arg = translate_and_pin_ipa(vcpu->kvm, a1, &pinned_page);
++		if (!pa_arg) {
++			vcpu_set_reg(vcpu, 0, ~0UL);
++			return true;
++		}
++		/* Use translated host physical address for SMC invocation */
++		a1 = pa_arg;
++		arg_translated = true;
++	}
++
+ 	/*
+ 	 * Enforce VMID context. In register a7, we pass the guest VM's VMID
+ 	 * (userspace_pid) to the Secure World so OP-TEE can isolate state.
+ 	 */
+ 	unsigned long a7 = vcpu->kvm->userspace_pid;
+ 
+ 	/* Forward the call to firmware */
+ 	forward_smc_to_secure_world(&res, a0, a1, a2, a3, a4, a5, a6, a7);
+ 
++	/* Clean up pinned memory after execution */
++	if (arg_translated && pinned_page) {
++		put_page(pinned_page);
++		kvm_release_pfn_clean(page_to_pfn(pinned_page));
++	}
++
+ 	/* Set return values in the vCPU registers */
+ 	vcpu_set_reg(vcpu, 0, res.a0);
+ 	vcpu_set_reg(vcpu, 1, res.a1);
+ 	vcpu_set_reg(vcpu, 2, res.a2);
+ 	vcpu_set_reg(vcpu, 3, res.a3);
+ 
+ 	return true;
+ }
+-- 
+2.34.1
